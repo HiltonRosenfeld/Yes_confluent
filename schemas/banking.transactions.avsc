@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "BankingTransaction",
+  "namespace": "com.banking",
+  "doc": "A single banking transaction produced by transaction_generator.py",
+  "fields": [
+    { "name": "txn_id",             "type": "string",                                                          "doc": "UUID of the transaction" },
+    { "name": "account_id",         "type": "string",                                                          "doc": "UUID of the account" },
+    { "name": "txn_type",           "type": { "type": "enum", "name": "TxnType",    "symbols": ["Deposit","Withdrawal","Transfer","POS","Fee","EMI"] } },
+    { "name": "amount",             "type": "double" },
+    { "name": "currency",           "type": { "type": "enum", "name": "Currency",   "symbols": ["USD","EUR","GBP","INR","AUD"] } },
+    { "name": "txn_time",           "type": { "type": "long", "logicalType": "timestamp-millis" },             "doc": "Milliseconds since Unix epoch (UTC) — maps to TIMESTAMP_LTZ(3) in Flink" },
+    { "name": "channel",            "type": { "type": "enum", "name": "Channel",    "symbols": ["Digital","Branch","POS"] } },
+    { "name": "status",             "type": { "type": "enum", "name": "TxnStatus",  "symbols": ["approved","pending","declined"] } },
+    { "name": "product_id",         "type": "string",                                                          "doc": "UUID of the product" },
+    { "name": "approved_by_emp_id", "type": ["null", "string"], "default": null,                               "doc": "UUID of approving employee, null if not applicable" }
+  ]
+}

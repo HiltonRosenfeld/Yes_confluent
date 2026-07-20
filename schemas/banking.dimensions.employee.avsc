@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "EmployeeDimension",
+  "namespace": "com.banking.dimensions",
+  "doc": "Employee dimension row published by dimension_loader.py to banking.dimensions.employee (JSON). This Avro file is documentation only — the topic is serialised as JSON.",
+  "fields": [
+    { "name": "emp_id",     "type": "string",           "doc": "UUID of the employee (string form)" },
+    { "name": "name",       "type": "string",           "doc": "Full name of the employee" },
+    { "name": "role",       "type": "string",           "doc": "Job role / title (e.g. Teller, Manager)" },
+    { "name": "branch_id",  "type": "string",           "doc": "UUID of the employee's home branch (string form)" },
+    { "name": "manager_id", "type": ["null", "string"], "default": null, "doc": "UUID of the direct manager, or null for top-level employees" },
+    { "name": "hire_date",  "type": "string",           "doc": "ISO-8601 date string of the hire date" }
+  ]
+}

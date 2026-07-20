@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "AccountDimension",
+  "namespace": "com.banking.dimensions",
+  "doc": "Account dimension row published by dimension_loader.py to banking.dimensions.account (JSON). This Avro file is documentation only — the topic is serialised as JSON.",
+  "fields": [
+    { "name": "account_id",   "type": "string", "doc": "UUID of the account (string form)" },
+    { "name": "customer_id",  "type": "string", "doc": "UUID of the owning customer (string form)" },
+    { "name": "account_type", "type": "string", "doc": "Account type (e.g. Savings, Current)" },
+    { "name": "status",       "type": "string", "doc": "Account status (e.g. Active, Closed)" },
+    { "name": "branch_id",    "type": "string", "doc": "UUID of the home branch (string form)" },
+    { "name": "opened_at",    "type": ["null", "string"], "default": null, "doc": "ISO-8601 UTC datetime when account was opened, or null" },
+    { "name": "closed_at",    "type": ["null", "string"], "default": null, "doc": "ISO-8601 UTC datetime when account was closed, or null" }
+  ]
+}

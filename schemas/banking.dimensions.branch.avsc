@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "BranchDimension",
+  "namespace": "com.banking.dimensions",
+  "doc": "Branch dimension row published by dimension_loader.py to banking.dimensions.branch (JSON). This Avro file is documentation only — the topic is serialised as JSON.",
+  "fields": [
+    { "name": "branch_id",   "type": "string", "doc": "UUID of the branch (string form)" },
+    { "name": "branch_name", "type": "string", "doc": "Human-readable branch name" },
+    { "name": "city",        "type": "string", "doc": "City where the branch is located" },
+    { "name": "region",      "type": "string", "doc": "Region / state where the branch is located" }
+  ]
+}

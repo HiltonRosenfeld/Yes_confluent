@@ -148,7 +148,7 @@ class Transaction:
     txn_type: str
     amount: float
     currency: str
-    txn_time: str
+    txn_time: int              # epoch milliseconds UTC — Avro timestamp-millis / Flink TIMESTAMP_LTZ(3)
     channel: str
     status: str
     product_id: str
@@ -168,9 +168,17 @@ def _date_in_past(years_back: int = 5) -> str:
 
 
 def _dt_in_past(days_back: int = 365) -> str:
+    """Return an ISO-8601 UTC timestamp string (used by Customer.created_at, Account.opened_at/closed_at)."""
     seconds = random.randint(0, days_back * 86_400)
     dt = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
-    return dt.isoformat()
+    return dt.isoformat(timespec='milliseconds')
+
+
+def _dt_in_past_ms(days_back: int = 365) -> int:
+    """Return a UTC timestamp as milliseconds since the Unix epoch (Avro timestamp-millis)."""
+    seconds = random.randint(0, days_back * 86_400)
+    dt = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
+    return int(dt.timestamp() * 1000)
 
 
 def _sample_amount(mu: float = 4.5, sigma: float = 1.5,
@@ -327,7 +335,8 @@ def generate_transactions(
             amount=_sample_amount(),
             #currency=random.choices(_CURRENCIES, weights=_CURRENCY_WEIGHTS, k=1)[0],
             currency="INR",
-            txn_time=_dt_in_past(days_back=365),
+            #txn_time=_dt_in_past_ms(days_back=365),
+            txn_time=int(datetime.datetime.now(tz=datetime.timezone.utc).timestamp() * 1000),
             channel=random.choices(CHANNELS, weights=CHANNEL_WEIGHTS, k=1)[0],
             status=status,
             product_id=random.choice(product_ids),
@@ -493,7 +502,12 @@ def _coerce_row(table: str, row: dict) -> tuple:
         elif field in _DATE_COLS and v is not None:
             v = datetime.date.fromisoformat(v)
         elif field in _TS_COLS and v is not None:
-            v = datetime.datetime.fromisoformat(v)
+            if isinstance(v, int):
+                # Avro timestamp-millis (Transaction.txn_time) — epoch ms → UTC datetime
+                v = datetime.datetime.fromtimestamp(v / 1000, tz=datetime.timezone.utc)
+            else:
+                # ISO-8601 string (Customer.created_at, Account.opened_at/closed_at)
+                v = datetime.datetime.fromisoformat(v)
         values.append(v)
     return tuple(values)
 

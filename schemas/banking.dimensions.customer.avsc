@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "CustomerDimension",
+  "namespace": "com.banking.dimensions",
+  "doc": "Customer dimension row published by dimension_loader.py to banking.dimensions.customer (JSON). This Avro file is documentation only — the topic is serialised as JSON.",
+  "fields": [
+    { "name": "customer_id",       "type": "string", "doc": "UUID of the customer (string form)" },
+    { "name": "name",              "type": "string", "doc": "Full name of the customer" },
+    { "name": "dob",               "type": "string", "doc": "Date of birth as ISO-8601 date string" },
+    { "name": "customer_segment",  "type": "string", "doc": "Customer segment (e.g. Retail, HNI, SME)" },
+    { "name": "pan_hash",          "type": "string", "doc": "SHA-256 hash of the PAN / tax identifier" },
+    { "name": "city",              "type": "string", "doc": "City of residence" },
+    { "name": "created_at",        "type": ["null", "string"], "default": null, "doc": "ISO-8601 UTC datetime when the customer record was created, or null" }
+  ]
+}
