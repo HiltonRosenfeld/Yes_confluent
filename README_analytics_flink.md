@@ -6,7 +6,7 @@ This document covers everything needed to run the analytics pipeline: dimension 
 
 ## Architecture Overview
 
-```
+```txt
 [AstraDB ODS]                      account, branch, customer, employee
       │
       │  dimension_loader.py  (one-shot)
@@ -57,6 +57,17 @@ Copy `.env.example` to `.env` and fill in every value:
 
 ---
 
+## Step 0 — Define Flink watermark on banking.transactions
+
+Run this once against banking.transactions:
+
+```sql
+ALTER TABLE `banking.transactions` 
+MODIFY WATERMARK FOR txn_time AS txn_time - INTERVAL '5' SECOND;
+```
+
+---
+
 ## Step 1 — Apply the Analytics Schema
 
 Run this once against your AstraDB keyspace before starting anything else:
@@ -90,7 +101,7 @@ Create the dimension and analytics sink topics in Confluent Cloud before running
 
 **Dimension topics** (compacted, used by Flink lookup joins):
 
-```
+```txt
 banking.dimensions.account
 banking.dimensions.branch
 banking.dimensions.customer
@@ -106,10 +117,15 @@ banking.dimensions.employee
 Run once (or whenever ODS dimension data changes materially):
 
 ```bash
-./scripts/run_dimension_loader.sh
+# Activate virtual environemnt
+source .venv/bin/activate
+
+# Dry run — print record counts only, write nothing
+python src/dimension_loader.py
 ```
 
 This script:
+
 1. Connects to AstraDB ODS and reads all rows from `account`, `branch`, `customer`, `employee`.
 2. Publishes each row as a JSON message to the corresponding `banking.dimensions.*` topic, keyed by the primary key UUID.
 3. Publishes `account_active` seed events to `analytics.customer_quarterly_summary` for each active account — these seed the `customer_account_count` counter table.
@@ -118,17 +134,22 @@ Re-run this script after bulk dimension changes (e.g. new branch added, customer
 
 ---
 
-## Step 4 — Deploy Flink SQL Jobs
+## Step 4 — Deploy Flink Materialized Tables
 
-Each SQL file in `src/flink/` is a self-contained Flink SQL statement. Deploy all six to Confluent Cloud Flink.
+We use Confluent Flink materialized tables instead of the older manual process of separately creating each of the workflow elements.
+
+- Combines the table definition and the continuous background query into one manageable entity.
+- Automatically spins up the backing Kafka topic and registers schemas in the Schema Registry.
+ 
+Each SQL file in `src/flink/` is a self-contained Flink SQL statement. Deploy them all to Confluent Cloud Flink.
 
 ### Via Confluent Cloud Console (UI)
 
-1. Open **Confluent Cloud Console → Environments → \<your environment\> → Flink**.
+1. Open **Confluent Cloud Console → SQL Workspaces**.
 2. Click **+ New statement**.
 3. Paste the contents of the SQL file.
-4. Click **Run**. The job runs continuously — do not stop it.
-5. Repeat for each of the six SQL files.
+4. Click **Run**. The job runs and creates the materialized table.
+5. Repeat for each of the SQL files.
 
 
 ### Job summary
@@ -139,23 +160,92 @@ Each SQL file in `src/flink/` is a self-contained Flink SQL statement. Deploy al
 | [`q2_high_value_hourly.sql`](src/flink/q2_high_value_hourly.sql) | `banking.transactions` | none | `analytics.high_value_transaction_hourly` |
 | [`q3_high_value_by_city.sql`](src/flink/q3_high_value_by_city.sql) | `banking.transactions` | account → branch | `analytics.high_value_transaction_by_city` |
 | [`q4_withdrawal_by_employee.sql`](src/flink/q4_withdrawal_by_employee.sql) | `banking.transactions` | employee → branch | `analytics.withdrawal_transaction_by_employee` |
-| [`q5_customer_quarterly.sql`](src/flink/q5_customer_quarterly.sql) | `banking.transactions` | account | `analytics.customer_quarterly_summary` |
+| [`q5a_customer_account_count.sql`](src/flink/q5a_customer_account_count.sql) | `banking.transactions` | account | `analytics.customer_account_count` |
+| [`q5b_customer_quarterly.sql`](src/flink/q5b_customer_quarterly.sql) | `banking.transactions` | account | `analytics.customer_quarterly_summary` |
 | [`q6_branch_daily_rollup.sql`](src/flink/q6_branch_daily_rollup.sql) | `banking.transactions` | account | `analytics.branch_daily_rollup` |
-
-**Q5 and Q6 note:** These jobs use a stateful `GROUP BY`. Flink checkpointing preserves state across restarts — running sums and counts continue from the last committed checkpoint.
-
-
 
 ---
 
-## Operational Order
+## Step 5 - Option 1 — Confluent Tableflow + Zero-Copy Data Federation
 
-```
-1. apply analytics_schema.cql      (once)
-2. create Kafka topics              (once)
-3. run_dimension_loader.sh          (once, or on dimension refresh)
-4. deploy all 6 Flink SQL jobs      (continuous, via Confluent Cloud)
-```
+The easiest way to integrate the two platforms is through Confluent Tableflow. Tableflow automatically materializes Kafka topics into Iceberg open-table formats residing in your cloud storage or in Confluent storage.
+
+### 1. Enable Tableflow in Confluent Cloud
+
+Configure Confluent Cloud to automatically materialize your streaming Kafka topics into Iceberg open-table formats.
+
+1. Go to Topics in your Confluent Cloud Console.
+2. Click on Enable Tableflow for each of the topics.
+3. Choose Iceberg as your table format.
+4. Select Use Confluent storage.
+
+### 2: Generate Confluent Iceberg Catalog Credentials
+
+Because the data resides in the Confluent Iceberg REST Catalog, you must generate access details so watsonx.data can look up the table layouts.
+
+1. In Confluent Cloud, navigate to Tableflow
+2. Copy the `API Access` `REST Catalog Endpoint`
+3. Generate a new API Key and Secret specifically for the Iceberg Catalog.
+    - Click `Create/View API keys`
+    - Click `Add API key`
+        - Name: `tableflow_key`
+        - Select account: `My account`
+        - Select key scope: `Tableflow`
+4. Copy the following:
+    - API Key
+    - API Secret
+
+### 3: Register the Confluent Catalog in IBM watsonx.data
+
+Configure watsonx.data environment to look across to Confluent as a external data platform without actually duplicating or importing the storage footprint.
+
+1. Log into your IBM watsonx.data instance console.
+2. Open the Infrastructure manager tab on the navigation side-panel.
+3. Click Add Component and choose Add catalog.
+4. Fill out the catalog creation wizard with these parameters:
+    - Catalog Type: Apache Iceberg
+    - Catalog Target: External REST Catalog (Select this option to use Confluent's endpoint)
+    - REST URI: Paste the Catalog URI copied from Confluent Cloud.
+    - Authentication: Input the API Key and API Secret generated in Step 2.
+5. Provide a memorable catalog name (e.g., confluent_iceberg_stream).
+6. Click Save to establish the connection.
+
+### 4: Associate the Catalog with Your Engines
+
+To run SQL queries against your real-time Kafka tables, your query engines need access permissions to this new catalog metadata.
+
+1. In the Infrastructure manager, locate your newly created confluent_iceberg_stream catalog.
+2. Click the options menu (three dots) next to the catalog and choose Associate engine.
+3. Select your active watsonx.data query engine—such as your Presto or Spark clusters.
+4. Confirm the association.
+
+
+## Step 5 — Option 2 - Create sinks to watsonx.data
+
+The materialized data will be exported to watsonx.data lakehouse for consumption by client applications.
+
+### 1: Provision and Prepare your IBM Cloud COS Bucket
+
+1. Create a dedicated bucket inside your IBM Cloud Object Storage instance.
+2. Generate HMAC Credentials for the service instance. Save the Access Key ID and Secret Access Key.
+3. Find your bucket endpoints by going to the Endpoints tab within your bucket configuration.
+4. Note down:
+    - Bucket Name
+    - Endpoint
+    - HMAC Credentials
+
+### 2: Configure the Confluent S3 Sink Connector
+
+1. Go to your Confluent Cloud Console
+2. Navigate to your cluster
+3. Select Connectors > Add Connector
+4. Search for and select the Amazon S3 Sink.
+5. Fill out the configuration fields using your IBM COS values:
+    - S3 Bucket Name: Your IBM COS Bucket Name
+    - Amazon S3 Details / Region: Set this to any dummy region, as the custom endpoint will override it.
+    - Authentication Type: Secret Key (using your IBM HMAC Access/Secret keys).
+    - Output Data Format: Parquet
+
 
 ---
 

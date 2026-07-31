@@ -16,8 +16,6 @@ CREATE TABLE IF NOT EXISTS transactions_by_account (
 CREATE CUSTOM INDEX txn_day_idx ON transactions_by_account (txn_day) USING 'StorageAttachedIndex';
 
 
-
-
 -- 2
 CREATE TABLE IF NOT EXISTS high_value_transaction_hourly (
     txn_minute text,             -- YYYYMMDDHHmm
@@ -30,6 +28,7 @@ CREATE TABLE IF NOT EXISTS high_value_transaction_hourly (
     status text,
     PRIMARY KEY ((txn_minute), txn_time, txn_id)
 ) WITH CLUSTERING ORDER BY (txn_time DESC, txn_id ASC);
+
 
 -- 3
 CREATE TABLE IF NOT EXISTS high_value_transaction_by_city (

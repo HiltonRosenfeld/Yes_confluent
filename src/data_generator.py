@@ -182,7 +182,7 @@ def _dt_in_past_ms(days_back: int = 365) -> int:
 
 
 def _sample_amount(mu: float = 4.5, sigma: float = 1.5,
-                   lo: float = 1.0, hi: float = 100_000.0) -> float:
+                   lo: float = 1.0, hi: float = 150_000.0) -> float:
     raw = random.lognormvariate(mu, sigma)
     return round(max(lo, min(raw, hi)), 2)
 
@@ -326,19 +326,21 @@ def generate_transactions(
     transactions = []
     for _ in range(n):
         account = random.choice(accounts)
-        status = random.choices(_TXN_STATUSES, weights=_TXN_STATUS_WEIGHTS, k=1)[0]
-        approved_by = random.choice(emp_ids) if status == "approved" else None
+        approved_by = random.choice(emp_ids)
         transactions.append(Transaction(
             txn_id=_uid(),
             account_id=account.account_id,
             txn_type=random.choice(TXN_TYPES),
+            #txn_type="Withdrawal",
             amount=_sample_amount(),
+            #amount=75000.00,
             #currency=random.choices(_CURRENCIES, weights=_CURRENCY_WEIGHTS, k=1)[0],
             currency="INR",
-            #txn_time=_dt_in_past_ms(days_back=365),
-            txn_time=int(datetime.datetime.now(tz=datetime.timezone.utc).timestamp() * 1000),
+            txn_time=_dt_in_past_ms(days_back=31),
+            #txn_time=int(datetime.datetime.now(tz=datetime.timezone.utc).timestamp() * 1000),
             channel=random.choices(CHANNELS, weights=CHANNEL_WEIGHTS, k=1)[0],
-            status=status,
+            #status = random.choices(_TXN_STATUSES, weights=_TXN_STATUS_WEIGHTS, k=1)[0],
+            status = "approved",
             product_id=random.choice(product_ids),
             approved_by_emp_id=approved_by,
         ))
