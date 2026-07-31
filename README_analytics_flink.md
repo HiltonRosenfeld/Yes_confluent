@@ -16,7 +16,7 @@ This document covers everything needed to run the analytics pipeline: dimension 
       │  Flink lookup joins
       ▼
 [Confluent Cloud Flink SQL]  ◄───  banking.transactions  (live stream)
-  6 SQL jobs (Q1 – Q6)
+  SQL Materialized Tables (Q1 – Q6)
       │
       │  enriched / aggregated events
       ▼
@@ -24,9 +24,9 @@ This document covers everything needed to run the analytics pipeline: dimension 
                                               high_value_transaction_by_city, withdrawal_transaction_by_employee,
                                               customer_quarterly_summary, branch_daily_rollup}
       │
-      │  astra_sink_worker.py  (one process per topic, long-running)
+      │  Confluent Tableflow (AWS S3 storage)
       ▼
-[AstraDB Analytics Keyspace]       8 analytics tables, queried by dashboards
+[Watsonx.data Presto]       8 analytics tables
 ```
 
 ---
@@ -35,9 +35,10 @@ This document covers everything needed to run the analytics pipeline: dimension 
 
 - Python 3.12 with the project venv already set up (`./scripts/setup.sh`)
 - `.env` file populated (see [Environment Variables](#environment-variables))
-- AstraDB analytics keyspace created and DDL applied (`src/analytics_schema.cql`)
+- AstraDB ods keyspace created and banking data generated (`README_dataset_generator.md`)
 - Confluent Cloud: `banking.transactions` topic exists and the transaction producer is running
 - Confluent Cloud: Flink environment provisioned (Confluent Cloud Console → Environments → Flink)
+- AWS: S3 bucket exists with access policy and access key
 
 ---
 
@@ -54,10 +55,13 @@ Copy `.env.example` to `.env` and fill in every value:
 | `KAFKA_API_KEY` | Confluent Cloud API key |
 | `KAFKA_API_SECRET` | Confluent Cloud API secret |
 | `KAFKA_TOPIC` | Source transaction topic (default: `banking.transactions`) |
+| `AWS_ACCESS_KEY_ID` | AWS S3 Access key |
+| `AWS_SECRET_ACCESS_KEY` | AWS S3 Secret Access key |
+
 
 ---
 
-## Step 0 — Define Flink watermark on banking.transactions
+## Step 1 — Define Flink watermark on banking.transactions
 
 Run this once against banking.transactions:
 
@@ -65,33 +69,6 @@ Run this once against banking.transactions:
 ALTER TABLE `banking.transactions` 
 MODIFY WATERMARK FOR txn_time AS txn_time - INTERVAL '5' SECOND;
 ```
-
----
-
-## Step 1 — Apply the Analytics Schema
-
-Run this once against your AstraDB keyspace before starting anything else:
-
-```bash
-# Using cqlsh with the secure bundle
-cqlsh -u token -p "$ASTRA_DB_APPLICATION_TOKEN" \
-  --secure-connect-bundle "$ASTRA_SECURE_BUNDLE_PATH" \
-  -k "$ASTRA_KEYSPACE" \
-  -f src/analytics_schema.cql
-```
-
-This creates the 8 analytics tables:
-
-| Table | Purpose |
-|---|---|
-| `transactions_by_account` | All transactions per account, sorted by time descending |
-| `high_value_transaction_hourly` | Transactions `> $10,000`, partitioned by minute |
-| `high_value_transaction_by_city` | Transactions `> $50,000`, partitioned by hour + city |
-| `withdrawal_transaction_by_employee` | Withdrawals per employee per quarter |
-| `customer_account_count` | Counter — active accounts per customer |
-| `customer_quarterly_txn_total` | Running quarterly spend per customer |
-| `high_value_customer_quarterly` | Customers with quarterly spend `> $1,000,000` |
-| `branch_daily_rollup` | Daily transaction count + total amount per branch |
 
 ---
 
@@ -108,7 +85,7 @@ banking.dimensions.customer
 banking.dimensions.employee
 ```
 
-> **Tip:** Set the dimension topics to `cleanup.policy=compact` so Flink always has the latest value for each key.
+> **Tip:** *Set the dimension topics to `cleanup.policy=compact` so Flink always has the latest value for each key.*
 
 ---
 
@@ -127,7 +104,7 @@ python src/dimension_loader.py
 This script:
 
 1. Connects to AstraDB ODS and reads all rows from `account`, `branch`, `customer`, `employee`.
-2. Publishes each row as a JSON message to the corresponding `banking.dimensions.*` topic, keyed by the primary key UUID.
+2. Publishes each row as an AVRO message to the corresponding `banking.dimensions.*` topic, keyed by the primary key UUID.
 3. Publishes `account_active` seed events to `analytics.customer_quarterly_summary` for each active account — these seed the `customer_account_count` counter table.
 
 Re-run this script after bulk dimension changes (e.g. new branch added, customer data refresh). Individual real-time changes should be published directly to the dimension topics by the upstream system.
@@ -219,34 +196,6 @@ To run SQL queries against your real-time Kafka tables, your query engines need 
 3. Select your active watsonx.data query engine—such as your Presto or Spark clusters.
 4. Confirm the association.
 
-
-## Step 5 — Option 2 - Create sinks to watsonx.data
-
-The materialized data will be exported to watsonx.data lakehouse for consumption by client applications.
-
-### 1: Provision and Prepare your IBM Cloud COS Bucket
-
-1. Create a dedicated bucket inside your IBM Cloud Object Storage instance.
-2. Generate HMAC Credentials for the service instance. Save the Access Key ID and Secret Access Key.
-3. Find your bucket endpoints by going to the Endpoints tab within your bucket configuration.
-4. Note down:
-    - Bucket Name
-    - Endpoint
-    - HMAC Credentials
-
-### 2: Configure the Confluent S3 Sink Connector
-
-1. Go to your Confluent Cloud Console
-2. Navigate to your cluster
-3. Select Connectors > Add Connector
-4. Search for and select the Amazon S3 Sink.
-5. Fill out the configuration fields using your IBM COS values:
-    - S3 Bucket Name: Your IBM COS Bucket Name
-    - Amazon S3 Details / Region: Set this to any dummy region, as the custom endpoint will override it.
-    - Authentication Type: Secret Key (using your IBM HMAC Access/Secret keys).
-    - Output Data Format: Parquet
-
-
 ---
 
 ## Querying the Analytics Tables
@@ -254,29 +203,37 @@ The materialized data will be exported to watsonx.data lakehouse for consumption
 ### Q1 — All transactions for an account in the last 30 days
 
 ```sql
--- Uses the SAI index on txn_day for efficient date range filtering
-SELECT * FROM transactions_by_account
-WHERE account_id = <uuid>
-  AND txn_day >= '20250101'   -- YYYYMMDD, adjust to 30 days ago
-  AND txn_day <= '20250131';
+SELECT *
+FROM analytics_transactions_by_account
+WHERE
+  account_id = 'da88aee4-a69d-445c-b766-9b4910109241'
+  AND txn_day >= '20260701'
+  AND txn_day <= '20260731'
+ORDER BY
+  txn_timestamp DESC
 ```
 
 ### Q2 — Transactions > $10,000 in the last 60 minutes
 
 ```sql
--- Scan the last 60 txn_minute partitions (YYYYMMDDHHmm)
-SELECT * FROM high_value_transaction_hourly
-WHERE txn_minute IN ('202501311400', '202501311401', /* ... */, '202501311459');
+SELECT *
+FROM analytics_high_value_transaction_hourly
+WHERE
+  txn_time >= current_timestamp - interval '1' hour
+  AND txn_time <= current_timestamp
 ```
 
 ### Q3 — Count of transactions > $50,000 by city in the last 24 hours
 
 ```sql
--- Aggregate last 24 bucket_hour partitions (YYYYMMDDHH)
-SELECT city, COUNT(*), SUM(amount)
-FROM high_value_transaction_by_city
-WHERE bucket_hour IN ('2025013109', '2025013110', /* ... */, '2025013108')
-GROUP BY city;
+SELECT city, txn_count
+FROM
+  analytics_high_value_transaction_by_city
+WHERE window_start >= current_timestamp - interval '24' hour
+  AND window_start <= current_timestamp
+-- option for arbitrary times
+--  window_start >= timestamp '2026-07-01 00:09:00'
+--  AND window_start < timestamp '2026-07-01 00:10:00'
 ```
 
 ### Q4 — Withdrawal transactions by manager (quarter)
@@ -286,30 +243,34 @@ GROUP BY city;
 -- then query each employee's partition
 SELECT * FROM withdrawal_transaction_by_employee
 WHERE employee_id = <emp_uuid>
-  AND quarter = '2025Q1';
+  AND quarter = '2025Q1'
 ```
 
-### Q5 — Customers with > 5 active accounts AND quarterly spend > $1,000,000
+### Q5 - Customers with > 5 active accounts AND quarterly spend > $1,000,000
 
 ```sql
--- Step 1: customers with > 5 active accounts
-SELECT customer_id FROM customer_account_count
-WHERE active_account_count > 5;   -- filter in application layer (counter tables don't support secondary indexes)
-
--- Step 2: cross-reference with high-value quarterly table
-SELECT customer_id, amount FROM high_value_customer_quarterly
-WHERE quarter = '2025-Q1';
+SELECT
+  txn.customer_id,
+  txn.quarter,
+  txn.amount
+FROM
+  analytics_customer_quarterly_txn_total AS txn
+  INNER JOIN analytics_customer_account_count AS acct ON txn.customer_id = acct.customer_id
+WHERE
+  acct.account_count > 5
+  AND txn.amount >= 1000000
 ```
 
-### Q6 — Daily branch totals for a date range
+### Q6 - Daily branch totals for a date range
 
 ```sql
 SELECT txn_date, total_amount, count_txn
-FROM branch_daily_rollup
-WHERE branch_id = <uuid>
-  AND txn_year = '2025'
-  AND txn_date >= '2025-01-01'
-  AND txn_date <= '2025-01-31';
+FROM analytics_branch_daily_rollup
+WHERE
+  branch_id='16c92a43-cf71-47ba-bac6-b032315e647a'
+  AND txn_date >= DATE '2026-07-25'
+  AND txn_date <= DATE '2026-07-31'
+ORDER BY txn_date DESC
 ```
 
 ---
