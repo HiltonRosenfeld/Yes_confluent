@@ -29,26 +29,13 @@ Pre-processes live banking transactions so dashboards can query low-latency, pre
 | Q5b | `flink/q5b_customer_quarterly.sql` | Rolling quarterly spend total per customer |
 | Q6 | `flink/q6_branch_daily_rollup.sql` | Daily transaction total and count per branch |
 
-## Repository Layout
-
-```
-src/
-  dimension_loader.py        Reads AstraDB ODS dimensions → publishes to Kafka
-  database_schema.cql        ODS source schema (customer, account, transaction, …)
-  analytics_schema.cql       Analytics query table DDL for AstraDB
-flink/
-  q1_txn_by_account.sql
-  q2_high_value_hourly.sql
-  q3_high_value_by_city.sql
-  q4_withdrawal_by_employee.sql
-  q5a_customer_account_count.sql
-  q5b_customer_quarterly.sql
-  q6_branch_daily_rollup.sql
-scripts/
-  setup.sh                   Create Python venv and install dependencies
-```
-
 ## Setup
+
+### Confluent Cloud
+
+See [`README_confluent_cloud.md`](README_confluent_cloud.md) for instructions on regsitering for and configuring your Confluent instance.
+
+### Data Flow
 
 See [`README_analytics_flink.md`](README_analytics_flink.md) for full step-by-step instructions:
 environment variables, topic creation, dimension loading, Flink job deployment, and sink worker setup.

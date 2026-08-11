@@ -4,33 +4,6 @@ This document covers everything needed to run the analytics pipeline: dimension 
 
 ---
 
-## Architecture Overview
-
-```txt
-[AstraDB ODS]                      account, branch, customer, employee
-      │
-      │  dimension_loader.py  (one-shot)
-      ▼
-[Confluent Cloud Kafka]            banking.dimensions.{account,branch,customer,employee}
-      │
-      │  Flink lookup joins
-      ▼
-[Confluent Cloud Flink SQL]  ◄───  banking.transactions  (live stream)
-  SQL Materialized Tables (Q1 – Q6)
-      │
-      │  enriched / aggregated events
-      ▼
-[Confluent Cloud Kafka]            analytics.{transactions_by_account, high_value_transaction_hourly,
-                                              high_value_transaction_by_city, withdrawal_transaction_by_employee,
-                                              customer_quarterly_summary, branch_daily_rollup}
-      │
-      │  Confluent Tableflow (AWS S3 storage)
-      ▼
-[Watsonx.data Presto]       8 analytics tables
-```
-
----
-
 ## Prerequisites
 
 - Python 3.12 with the project venv already set up (`./scripts/setup.sh`)
@@ -143,7 +116,7 @@ Each SQL file in `src/flink/` is a self-contained Flink SQL statement. Deploy th
 
 ---
 
-## Step 5 - Option 1 — Confluent Tableflow + Zero-Copy Data Federation
+## Step 5 — Confluent Tableflow + Zero-Copy Data Federation
 
 The easiest way to integrate the two platforms is through Confluent Tableflow. Tableflow automatically materializes Kafka topics into Iceberg open-table formats residing in your cloud storage or in Confluent storage.
 
@@ -271,27 +244,4 @@ WHERE
   AND txn_date >= DATE '2026-07-25'
   AND txn_date <= DATE '2026-07-31'
 ORDER BY txn_date DESC
-```
-
----
-
-## File Reference
-
-```
-src/
-  dimension_loader.py              Reads AstraDB ODS dimensions → publishes to Kafka
-  flink/
-    q1_txn_by_account.sql          Flink job: all transactions per account
-    q2_high_value_hourly.sql       Flink job: filter amount > 10,000
-    q3_high_value_by_city.sql      Flink job: filter amount > 50,000, enrich with city
-    q4_withdrawal_by_employee.sql  Flink job: withdrawals, enrich with branch
-    q5_customer_quarterly.sql      Flink job: running quarterly sum per customer
-    q6_branch_daily_rollup.sql     Flink job: daily rollup per branch
-  sink/
-    sink_schemas.py                Topic → CQL registry and field extractors
-    astra_sink_worker.py           Generic Kafka consumer → AstraDB writer (CLI)
-  analytics_schema.cql             DDL for all 8 analytics tables
-scripts/
-  run_dimension_loader.sh          One-shot: load dimensions into Kafka
-  run_sink_workers.sh              Start all 6 sink workers (with PID tracking)
 ```
