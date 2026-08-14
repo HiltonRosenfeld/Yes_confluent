@@ -1,6 +1,12 @@
-# Real-Time Banking Analytics
+# Real-Time Banking Analytics Pipeline
 
 Pre-processes live banking transactions so dashboards can query low-latency, pre-aggregated results without reprocessing raw transactional data on every refresh.
+
+Features:
+- synthetic banking data pipeline that generates transactions
+- streams the transactions through Confluent Cloud Kafka
+- processes the transactions with Confluent Cloud Flink into pre-aggregated analytics tables in Iceberg on Cloud Object Storage
+- queries the data from IBM watsonx.data using Presto
 
 ## How It Works
 
